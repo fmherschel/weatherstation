@@ -1,4 +1,4 @@
-#define VERSION "1.4.24"
+#define VERSION "1.5.7"
 
 #include <LiquidCrystal_I2C.h>
 
@@ -24,11 +24,12 @@ long oldMenueValue = 0;
 #define LIGHT_MIN 0
 int  lightValue = LIGHT_MAX;
 
+#define MODE_NOT_IMPLEMENTED -1
 #define MODE_WETTER_STATION 0
-#define MODE_MAIN_MENUE          1
+#define MODE_MAIN_MENU     1
 #define MODE_SETTINGS       2
 #define MODE_RESET_MINMAX   3
-#define MODE_
+#define MODE_SET_ALTITUDE   4
 
 int mode = MODE_WETTER_STATION;
 
@@ -45,6 +46,38 @@ DS3231 RTC;
 boolean Dummy;
 
 Sodaq_BMP085 bmp;
+
+/*
+ * MENU STRUCTURES
+ */
+
+typedef struct menu {
+  char entry_title[20];
+  int  action;
+  int next_action;                                                                                                                                                                                                                                       
+};
+
+const menu main_menu[] = {
+  { "Set", MODE_SETTINGS, MODE_WETTER_STATION },    
+  { "Reset", MODE_RESET_MINMAX, MODE_WETTER_STATION },
+  { "Test 3", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+  { "Test 4", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+  { "Test 5", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+  { "Test 6", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+  { "Test 7", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+  { "Wetter", MODE_WETTER_STATION, MODE_WETTER_STATION },
+};
+
+const menu set_menu[] = {
+  { "Altitude", MODE_SET_ALTITUDE, MODE_WETTER_STATION },
+  { "Test 2", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+  { "Test 3", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+  { "Test 4", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+  { "Test 5", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+  { "Test 6", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+  { "Test 7", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+  { "Back",     MODE_MAIN_MENU,     MODE_WETTER_STATION },
+};
 
 byte deg[8] = { B00100,
                 B01010,
@@ -77,7 +110,7 @@ byte min[8] = { B00000,
               };
 
 /*
-      EEPROM format
+      EEPROM format version 1
       Offset : Type  : Length : Remark
       0 :    : Byte  : 1      : Version
       1 :    : Byte  : 1      : Reset Info (byte) 255-Reset all values
@@ -85,8 +118,6 @@ byte min[8] = { B00000,
       6 :    : Float : 4      : tempMin
 */
 
-//
-//
 #define ADDR_VERSION  0
 #define ADDR_RESET    1
 #define ADDR_TEMP_MAX 2
@@ -240,27 +271,28 @@ void setup()
   attachInterrupt(digitalPinToInterrupt(SW), Interrupt, FALLING);
 }
 
-void show_menue(int entry)
+void show_menue(const menu theMenu[], int entry)
 {
+  lcd.clear();
   int row, col;
   if ( entry < 4 ) {
     col=0; row=entry;
   } else {
     col=10; row=entry-4;
   }
-  lcd.clear();
-  lcd.setCursor(1, 0);
-  lcd.print(F("Set"));
-  lcd.setCursor(1, 1);
-  lcd.print(F("Reset"));
-  lcd.setCursor(1, 2);
-  lcd.print(F("Drei"));
-  lcd.setCursor(1, 3);
-  lcd.print(F("Vier"));
-  lcd.setCursor(11, 0);
-  lcd.print(F("Fuenf"));  
+
   lcd.setCursor(col, row);
   lcd.print(F("*"));
+
+  for (int i=0; i<8; i++) { // TODO make 8 flexible!!
+    if ( i < 4 ) {
+      col=1; row=i;
+    } else {
+      col=11; row=i-4;
+    } 
+    lcd.setCursor(col, row);
+    lcd.print(theMenu[i].entry_title);  
+  }
 }
 
 /*
@@ -295,37 +327,49 @@ int menue()
 {
   int selected_entry = 0;
   klicked = 0; // reset "klicked" to react on a new event
-  show_menue(0);
-  while (! klicked) {
-    /*
-    #if 0
-    menueValue = menueSelector.read() / 4;
-    if ( menueValue != oldMenueValue ) {
-      if ( menueValue > oldMenueValue ) {
-        selected_entry++;
-      } else {
-        selected_entry--;
-      }
-      if ( selected_entry > 7 ) {
-        selected_entry = 7;
-      } else if ( selected_entry < 0 ) {
-        selected_entry = 0;
-      }
-      show_menue(selected_entry);
-      Serial.print(menueValue); Serial.print(F(" ")); Serial.println(selected_entry);
-      oldMenueValue = menueValue;
-    }
-    #endif
-    */
-    
+  show_menue(main_menu,0);
+  while (! klicked) {    
     if ( check_selector(&oldMenueValue, &menueValue, &selected_entry, 0, 7)) {
-      show_menue(selected_entry);
-      Serial.print(F("Menue: ")); Serial.println(selected_entry);  
+      show_menue(main_menu, selected_entry);
+      Serial.print(F("Menue: ")); Serial.print(selected_entry); Serial.print(F(" ")); Serial.print(main_menu[selected_entry].entry_title); Serial.print(F(" ")); Serial.print(main_menu[selected_entry].action);
+      Serial.println();  
     }
   }
   lcd.clear();
   klicked = 0;
   return selected_entry;
+}
+
+// MODE_SETTINGS
+int set_menue()
+{
+  int selected_entry = 0;
+  Serial.println("set_menu");
+  klicked = 0; // reset "klicked" to react on a new event
+  show_menue(set_menu, 0);
+  while (! klicked) {    
+    if ( check_selector(&oldMenueValue, &menueValue, &selected_entry, 0, 7)) {
+      show_menue(set_menu, selected_entry);
+      Serial.print(F("Menue: ")); Serial.print(selected_entry); Serial.print(F(" ")); Serial.print(set_menu[selected_entry].entry_title); Serial.print(F(" ")); Serial.print(set_menu[selected_entry].action);
+      Serial.println();  
+    }
+  }
+  lcd.clear();
+  klicked = 0;
+  return selected_entry;
+}
+
+int32_t set_altitude(int32_t oldAltitude) {
+  int newAltitude;
+  while (! klicked) {
+    if ( check_selector(&oldMenueValue, &menueValue, &newAltitude, 0, 4000) ) {
+      lcd.setCursor(0,1);
+      lcd.print(newAltitude);
+    }
+  }
+  lcd.clear();
+  klicked = 0;
+  return (int32_t) newAltitude;
 }
 
 void wetterStation()
@@ -426,75 +470,6 @@ void wetterStation()
   sprintf(bufferOut, "%02i", seconds); lcd.print(bufferOut);
 }
 
-int lastRuntime = 0;
-int currRuntime;
-
-void loop()
-{
-  if ( klicked && mode == MODE_WETTER_STATION ) {
-    mode = MODE_MAIN_MENUE;
-    klicked = 0;
-  }
-  
-  menueValue = menueSelector.read() / 4; // in the serial dump I see alway 4 hits per tick
-  if ( mode == MODE_WETTER_STATION ) {
-    /*
-     * Handling for mode "wetter station"
-     */
-    if ( menueValue != oldMenueValue ) {
-      if ( menueValue > oldMenueValue ) {
-        lightValue++;
-      } else {
-        lightValue--;
-      }
-      if ( lightValue > LIGHT_MAX ) {
-        lightValue = LIGHT_MAX;
-      } else if ( lightValue < LIGHT_MIN ) {
-        lightValue = LIGHT_MIN;
-      }
-      Serial.println(lightValue);
-      oldMenueValue = menueValue;
-      Serial.println(menueValue);
-    }
-    /*
-      if ( menueValue % 2 == 0 ) {
-      lcd.backlight();
-      } else {
-      lcd.noBacklight();
-      }
-    */
-    lcd.setBacklight(lightValue);
-    /*
-       handle overflow of millis()
-    */
-    currRuntime = millis();
-    if ( currRuntime < lastRuntime ) {
-      lastRuntime = currRuntime;
-    }
-
-    if ( currRuntime >= lastRuntime + 1000 ) {
-      lastRuntime = currRuntime;
-      wetterStation();
-    }
-  } else if (mode == MODE_MAIN_MENUE ) {
-     int follow_up = menue();    // get entry later
-     lcd.clear();
-     lcd.setCursor(0, 0);
-     lcd.print(F("Entry ")); lcd.print(follow_up);
-     if (follow_up == 1) {
-        mode = MODE_RESET_MINMAX;
-     } else {
-       mode = MODE_WETTER_STATION; // change later (need to jump to submenue or subfunction)
-       delay(500);
-     }
-     klicked = 0;
-  } else if (mode == MODE_RESET_MINMAX ) {
-    useMax = false;
-    useMin = false;
-    mode = MODE_WETTER_STATION;
-  }
-}
-
 int last_klick = 0;
 
 void Interrupt()
@@ -509,5 +484,117 @@ void Interrupt()
     Serial.println();
     klicked = 1;
     last_klick = now;
+  }
+}
+
+int lastRuntime = 0;
+int currRuntime;
+
+void loop()
+{
+  if ( klicked && mode == MODE_WETTER_STATION ) {
+    mode = MODE_MAIN_MENU;
+    klicked = 0;
+  }
+  
+  menueValue = menueSelector.read() / 4; // in the serial dump I see alway 4 hits per tick
+  if ( mode == MODE_WETTER_STATION ) {
+    /*
+     * Handling for mode "wetter station"
+     */     
+    if ( check_selector(&oldMenueValue, &menueValue, &lightValue, LIGHT_MIN, LIGHT_MAX)) {
+      lcd.setBacklight(lightValue);
+      // show_menue(selected_entry);
+      Serial.print(F("Light: ")); Serial.print(lightValue);
+      Serial.println();
+    }
+   /*
+    if ( menueValue != oldMenueValue ) {
+      if ( menueValue > oldMenueValue ) {
+        lightValue++;
+      } else {
+        lightValue--;
+      }
+      if ( lightValue > LIGHT_MAX ) {
+        lightValue = LIGHT_MAX;
+      } else if ( lightValue < LIGHT_MIN ) {
+        lightValue = LIGHT_MIN;
+      }
+      Serial.println(lightValue);
+      oldMenueValue = menueValue;
+      // Serial.println(menueValue);
+    }
+    */
+    /*
+      if ( menueValue % 2 == 0 ) {
+      lcd.backlight();
+      } else {
+      lcd.noBacklight();
+      }
+    */
+    
+    /*
+       handle overflow of millis()
+    */
+    currRuntime = millis();
+    if ( currRuntime < lastRuntime ) {
+      lastRuntime = currRuntime;
+    }
+
+    if ( currRuntime >= lastRuntime + 1000 ) {
+      lastRuntime = currRuntime;
+      wetterStation();
+    }
+  } else if (mode == MODE_MAIN_MENU ) {
+     int follow_up = menue();    // get entry later
+     lcd.clear();
+     lcd.setCursor(0, 0);
+     lcd.print(F("Entry ")); lcd.print(main_menu[follow_up].entry_title);
+     lcd.setCursor(0, 1);
+     lcd.print(F("Action ")); lcd.print(main_menu[follow_up].action);
+     mode = main_menu[follow_up].action;
+     delay(1000);
+     lcd.clear();
+     /*
+     if (follow_up == 1) {
+        mode = MODE_RESET_MINMAX;
+     } else {
+       mode = MODE_WETTER_STATION; // change later (need to jump to submenue or subfunction)
+       delay(500);
+     }
+     */
+     klicked = 0;
+  } else if (mode == MODE_SETTINGS ) {
+     Serial.println("MODE_SETTINGS");
+     int follow_up = set_menue();
+     lcd.clear();
+     lcd.setCursor(0, 0);
+     lcd.print(F("Set Entry ")); lcd.print(set_menu[follow_up].entry_title);
+     lcd.setCursor(0, 1);
+     lcd.print(F("Set Action ")); lcd.print(set_menu[follow_up].action);
+     mode = set_menu[follow_up].action;
+     delay(1000);
+     lcd.clear();
+  } else if (mode == MODE_RESET_MINMAX ) {
+    useMax = false;
+    useMin = false;
+    mode = MODE_WETTER_STATION;
+  } else if (mode == MODE_SET_ALTITUDE ) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print(F("Set altitude"));
+    altitude = set_altitude(altitude);
+    delay(1000);
+    lcd.clear();
+    // mode = main_menu[follow_up].next_action;
+    mode = MODE_WETTER_STATION;
+  } else if (mode == MODE_NOT_IMPLEMENTED ) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print(F("Not implmented!"));
+    delay(1000);
+    lcd.clear();
+    // mode = main_menu[follow_up].next_action;
+    mode = MODE_WETTER_STATION;
   }
 }
