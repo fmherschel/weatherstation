@@ -7,8 +7,9 @@ LiquidCrystal_I2C lcd(0x27,20,4);  // set the LCD address to 0x27 for a 16 chars
 #include "DHT.h"
 #include "EEPROM.h"
 #include "DS3231.h"
+#include <Sodaq_BMP085.h>
 
-#define VERSION "1.1.0"
+#define VERSION "1.3.0"
 
 #define DHTPIN 2     // Digital pin connected to the DHT sensor
 #define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
@@ -18,6 +19,8 @@ DHT dht(DHTPIN, DHTTYPE);
 
 DS3231 RTC;
 boolean Dummy;
+
+Sodaq_BMP085 bmp;
 
 byte deg[8] = { B00100,
                 B01010,
@@ -156,7 +159,7 @@ void setup()
   Serial.print(F("DHT_LCD loop "));Serial.println(F(VERSION));
   // EEPROM.write(ADDR_VERSION,1); EEPROM.write(ADDR_RESET,255);
   dht.begin();
-
+  bmp.begin();
   
   lcd.init();                      // initialize the lcd
   // Print a message to the LCD.
@@ -166,6 +169,14 @@ void setup()
   lcd.backlight();   
   lcd.noBlink();
 
+  lcd.setCursor(0,0);
+  lcd.print(F("fh weatherstation"));
+  lcd.setCursor(0,1);
+  lcd.print(F("V ")); lcd.print(F(VERSION));
+
+  delay(5000);
+
+  lcd.clear();
   /* 
    *  initialize RTC, if year is equal 0 otherwise keep already stored time
    */
@@ -176,8 +187,7 @@ void setup()
       RTC.setHour(20);
       RTC.setMinute(22);
       RTC.setSecond(0);
-  }
-   
+  }   
   
   eprom_dump_flat(0,16);
   if (true || eprom_check_float(ADDR_TEMP_MAX)){
@@ -192,12 +202,6 @@ void setup()
     tempMin=eprom_get_float(ADDR_TEMP_MIN);    // 2nd field in epprom is tempMin
     Serial.print(F("tempMax from EEPROM: ")); Serial.println(tempMin);
   }
-  /*
-  dump_float(12.0);
-  dump_float(0.0);
-  dump_float(22.3);
-  dump_float(23.5);
-  */
 }
 
 void loop()
@@ -249,6 +253,8 @@ void loop()
     eprom_set_float(ADDR_TEMP_MIN, tempMin);
     useMin = true;
   }
+
+  
   
   // Check if any reads failed and exit early (to try again).
   if (isnan(h) || isnan(t) || isnan(f)) {
@@ -291,7 +297,11 @@ void loop()
   sprintf(bufferOut, "(%s", str_temp);
 
   lcd.setCursor(0,1);
-  lcd.print((bufferOut)); lcd.print((char) 0); lcd.print(F("C)"));
+  // lcd.print((bufferOut)); lcd.print((char) 0); lcd.print(F("C)"));
+  lcd.print(bmp.readPressure());
+
+  lcd.setCursor(0,2);
+  lcd.print(bmp.readTemperature());
 
   dtostrf(tempMax, 3, 1, str_temp);
   sprintf(bufferOut, "%s", str_temp);
