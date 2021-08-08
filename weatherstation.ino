@@ -8,8 +8,18 @@ LiquidCrystal_I2C lcd(0x27,20,4);  // set the LCD address to 0x27 for a 16 chars
 #include "EEPROM.h"
 #include "DS3231.h"
 #include <Sodaq_BMP085.h>
+#include <Encoder.h>
 
-#define VERSION "1.3.0"
+const int CLK = 5;
+const int DT  = 4;
+const int SW  = 3;
+
+Encoder menueSelector(DT,CLK);
+
+long menueValue = 0;
+int  lightValue = 0;  // TODO check, if 0 is a good or bad start value
+
+#define VERSION "1.4.0"
 
 #define DHTPIN 2     // Digital pin connected to the DHT sensor
 #define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
@@ -202,6 +212,10 @@ void setup()
     tempMin=eprom_get_float(ADDR_TEMP_MIN);    // 2nd field in epprom is tempMin
     Serial.print(F("tempMax from EEPROM: ")); Serial.println(tempMin);
   }
+
+  pinMode(SW, INPUT);
+  attachInterrupt(digitalPinToInterrupt(SW), Interrupt, CHANGE);
+  
 }
 
 void loop()
@@ -300,9 +314,15 @@ void loop()
   // lcd.print((bufferOut)); lcd.print((char) 0); lcd.print(F("C)"));
   lcd.print(bmp.readPressure());
 
+  /* temp value from bosch
   lcd.setCursor(0,2);
   lcd.print(bmp.readTemperature());
+  */
 
+  menueValue = menueSelector.read();
+  lcd.setCursor(0,2);
+  lcd.print(menueValue);
+  
   dtostrf(tempMax, 3, 1, str_temp);
   sprintf(bufferOut, "%s", str_temp);
   lcd.setCursor(10,1);
@@ -351,4 +371,9 @@ void loop()
   delay(1000);
   //lcd.noBacklight();
   //delay(5000);
+}
+
+void Interrupt() 
+{
+    menueValue = 0; 
 }
