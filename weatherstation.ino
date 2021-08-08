@@ -8,7 +8,7 @@ LiquidCrystal_I2C lcd(0x27,20,4);  // set the LCD address to 0x27 for a 16 chars
 #include "EEPROM.h"
 #include "DS3231.h"
 
-#define VERSION "1.0.6"
+#define VERSION "1.1.0"
 
 #define DHTPIN 2     // Digital pin connected to the DHT sensor
 #define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
@@ -166,22 +166,25 @@ void setup()
   lcd.backlight();   
   lcd.noBlink();
 
+  /* 
+   *  initialize RTC, if year is equal 0 otherwise keep already stored time
+   */
   if ( RTC.getYear() == 0 ) {
-  RTC.setDate(10);
-  RTC.setMonth(9);
-  RTC.setYear(20);
-  RTC.setHour(20);
-  RTC.setMinute(22);
-  RTC.setSecond(0);
+      RTC.setDate(10);
+      RTC.setMonth(9);
+      RTC.setYear(20);
+      RTC.setHour(20);
+      RTC.setMinute(22);
+      RTC.setSecond(0);
   }
    
   
   eprom_dump_flat(0,16);
   if (true || eprom_check_float(ADDR_TEMP_MAX)){
-    useMax=true;
-    Serial.println(F("useMax=true"));
-    tempMax=eprom_get_float(ADDR_TEMP_MAX);    // 1st field in epropm is tempMax
-    Serial.print(F("tempMax from EEPROM: ")); Serial.println(tempMax);
+      useMax=true;
+      Serial.println(F("useMax=true"));
+      tempMax=eprom_get_float(ADDR_TEMP_MAX);    // 1st field in epropm is tempMax
+      Serial.print(F("tempMax from EEPROM: ")); Serial.println(tempMax);
   }
   if (true || eprom_check_float(ADDR_TEMP_MIN)){
     useMin=true;
