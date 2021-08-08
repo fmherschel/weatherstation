@@ -1,4 +1,4 @@
-#define VERSION "1.5.7"
+#define VERSION "1.6.11"
 
 #include <LiquidCrystal_I2C.h>
 
@@ -20,6 +20,9 @@ Encoder menueSelector(DT, CLK);
 
 long menueValue = 0;
 long oldMenueValue = 0;
+int last_klick = 0;
+bool release_klick = false;
+
 #define LIGHT_MAX 1            // current LCD type only supports on and off
 #define LIGHT_MIN 0
 int  lightValue = LIGHT_MAX;
@@ -112,11 +115,23 @@ byte min[8] = { B00000,
 /*
       EEPROM format version 1
       Offset : Type  : Length : Remark
-      0 :    : Byte  : 1      : Version
-      1 :    : Byte  : 1      : Reset Info (byte) 255-Reset all values
-      2 :    : Float : 4      : tempMax
-      6 :    : Float : 4      : tempMin
+      0  :    : Byte  : 1      : Version
+      1  :    : Byte  : 1      : Reset Info (byte) 255-Reset all values
+      2  :    : Float : 4      : tempMax
+      6  :    : Float : 4      : tempMin
+      10 :    : int   : 4/2?   : Altitude
 */
+
+typedef struct efv1 { 
+  byte  version;
+  byte  reset;
+  float tempMax;
+  float tempMin;
+  int   altitude;
+};
+
+struct efv1 eeprom_values;
+bool   eeprom_update = false;
 
 #define ADDR_VERSION  0
 #define ADDR_RESET    1
@@ -129,6 +144,24 @@ float tempMax = 0.0;
 float tempMin = 0.0;
 
 int klicked = 0;
+
+void read_eprom_values(efv1 *eprom_data) {
+  int count;
+  byte *eByte = (byte *) eprom_data;
+  for ( count = 0; count < sizeof(efv1); count++ ) {
+    *eByte = EEPROM.read(count);
+    eByte++;
+  }
+}
+
+void write_eprom_values(efv1 *eprom_data) {
+  int count;
+  byte *eByte = (byte *) eprom_data;
+  for ( count = 0; count < sizeof(efv1); count++ ) {
+    EEPROM.write(count,*eByte);
+    eByte++;
+  }
+}
 
 /*
    byte floatTest[] = { 205, 204, 192, 65 };
@@ -145,51 +178,6 @@ bool eprom_check_float(int addr)
     if ( check != 0 ) {
       result = true;
     }
-  }
-}
-
-float eprom_get_float(int addr)
-{
-  int count;
-  float result;
-  byte * emap2float;
-  byte help;
-  emap2float = (byte *) &result;
-  for ( count = 0; count < sizeof(float); count++ ) {
-    help = EEPROM.read(addr + count);
-    emap2float[count] = help;
-    /*
-     *     
-    Serial.print(F("EE["));
-    Serial.print(addr + count);
-    Serial.print(F("]="));
-    Serial.println(help);
-    */
-  }
-  return result;
-}
-
-void eprom_set_float(int addr, float value)
-{
-  int count;
-  byte * emap2float;
-  emap2float = (byte *) &value;
-  for ( count = 0; count < sizeof(float); count++ ) {
-    /*
-    Serial.print(F("EE["));
-    Serial.print(addr + count);
-    Serial.print(F("]="));
-    Serial.println(emap2float[count]);
-    */
-    EEPROM.write(addr + count, emap2float[count]);
-  }
-}
-
-void eprom_reset_float(int addr)
-{
-  int count;
-  for ( count = 0; count < sizeof(float); count++ ) {
-    EEPROM.write(addr + count, 0);
   }
 }
 
@@ -219,6 +207,8 @@ void dump_float(float dumpMe)
 
 void setup()
 {
+  // do not accept klicks during setup
+  release_klick = false;
   Serial.begin(9600);
   Serial.print(F("DHT_LCD loop ")); Serial.println(F(VERSION));
   // EEPROM.write(ADDR_VERSION,1); EEPROM.write(ADDR_RESET,255);
@@ -254,21 +244,34 @@ void setup()
   }
 
   eprom_dump_flat(0, 16);
-  if (true || eprom_check_float(ADDR_TEMP_MAX)) {
+  read_eprom_values(&eeprom_values);
+  Serial.print("version: "); Serial.println(eeprom_values.version);
+  Serial.print("reset:   "); Serial.println(eeprom_values.reset);
+  Serial.print("tempMax:   "); Serial.println(eeprom_values.tempMax);
+  Serial.print("tempMin:   "); Serial.println(eeprom_values.tempMin);
+  Serial.print("altitude:   "); Serial.println(eeprom_values.altitude);
+  if ( eeprom_values.version == 1 ) {
     useMax = true;
-    Serial.println(F("useMax=true"));
-    tempMax = eprom_get_float(ADDR_TEMP_MAX);  // 1st field in epropm is tempMax
-    Serial.print(F("tempMax from EEPROM: ")); Serial.println(tempMax);
-  }
-  if (true || eprom_check_float(ADDR_TEMP_MIN)) {
     useMin = true;
-    Serial.println(F("useMin=true"));
-    tempMin = eprom_get_float(ADDR_TEMP_MIN);  // 2nd field in epprom is tempMin
-    Serial.print(F("tempMax from EEPROM: ")); Serial.println(tempMin);
+    tempMax = eeprom_values.tempMax;
+    tempMin = eeprom_values.tempMin;
+    Serial.println("Migrate version 1 to version 2.");
+    eeprom_values.version = 2;          // migrate version 1 to 2
+    eeprom_values.altitude = altitude;  // version 2 also needs altitude
+    write_eprom_values(&eeprom_values);
+  } else if ( eeprom_values.version == 2 ) {
+    useMax = true;
+    useMin = true;
+    tempMax = eeprom_values.tempMax;
+    tempMin = eeprom_values.tempMin;
+    altitude = eeprom_values.altitude;
   }
-
   pinMode(SW, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(SW), Interrupt, FALLING);
+  last_klick = millis();
+  Serial.print("last_klick:   "); Serial.println(last_klick);
+  // begin to accept klicks
+  release_klick = true;
 }
 
 void show_menue(const menu theMenu[], int entry)
@@ -360,7 +363,9 @@ int set_menue()
 }
 
 int32_t set_altitude(int32_t oldAltitude) {
-  int newAltitude;
+  int newAltitude=oldAltitude;
+  lcd.setCursor(0,1);
+  lcd.print(newAltitude);
   while (! klicked) {
     if ( check_selector(&oldMenueValue, &menueValue, &newAltitude, 0, 4000) ) {
       lcd.setCursor(0,1);
@@ -393,24 +398,26 @@ void wetterStation()
     if ( t > tempMax ) {
       tempMax = t;
       Serial.print(F("Set new Max ")); Serial.print(tempMax); Serial.print(F(": "));
-      eprom_set_float(ADDR_TEMP_MAX, tempMax);
-      // eprom_dump_flat(0,4);
+      eeprom_values.tempMax = tempMax;
+      eeprom_update = true;      
     }
   } else {
     tempMax = t;
-    eprom_set_float(ADDR_TEMP_MAX, tempMax);
+    eeprom_values.tempMax = tempMax;
+    eeprom_update = true;
     useMax = true;
   }
   if (useMin) {
     if ( t < tempMin ) {
       tempMin = t;
       Serial.print(F("Set new Min ")); Serial.print(tempMin); Serial.print(F(": "));
-      eprom_set_float(ADDR_TEMP_MIN, tempMin);
-      // eprom_dump_flat(5,4);
+      eeprom_values.tempMin = tempMin;
+      eeprom_update = true;
     }
   } else {
     tempMin = t;
-    eprom_set_float(ADDR_TEMP_MIN, tempMin);
+    eeprom_values.tempMin = tempMin;
+    eeprom_update = true;
     useMin = true;
   }
 
@@ -438,8 +445,10 @@ void wetterStation()
   sprintf(bufferOut, "%s hPa", str_temp);
   lcd.print((bufferOut));
 
+  dtostrf(altitude, 4, 0, str_temp);
+  sprintf(bufferOut, "%s m", str_temp);
   lcd.setCursor(0, 2);
-  lcd.print(lightValue);
+  lcd.print(bufferOut);
 
   dtostrf(tempMax, 3, 1, str_temp);
   sprintf(bufferOut, "%s", str_temp);
@@ -470,20 +479,22 @@ void wetterStation()
   sprintf(bufferOut, "%02i", seconds); lcd.print(bufferOut);
 }
 
-int last_klick = 0;
-
 void Interrupt()
 {
   int now = millis();
   if ( now < last_klick ) { // millis overflow
     last_klick = now;
   }
-  if ( last_klick + 500 <= now ) { // klicks "entprellen"
+  if ( release_klick && (last_klick + 500 <= now) ) { // klicks "entprellen"
     Serial.print("Klick!! ");
+    Serial.print(now); Serial.print(" ");
+    Serial.print(last_klick); Serial.print(" ");
     Serial.print(now - last_klick);
     Serial.println();
     klicked = 1;
     last_klick = now;
+  } else {
+    Serial.print("Klick filtered ");    
   }
 }
 
@@ -509,31 +520,6 @@ void loop()
       Serial.println();
     }
    /*
-    if ( menueValue != oldMenueValue ) {
-      if ( menueValue > oldMenueValue ) {
-        lightValue++;
-      } else {
-        lightValue--;
-      }
-      if ( lightValue > LIGHT_MAX ) {
-        lightValue = LIGHT_MAX;
-      } else if ( lightValue < LIGHT_MIN ) {
-        lightValue = LIGHT_MIN;
-      }
-      Serial.println(lightValue);
-      oldMenueValue = menueValue;
-      // Serial.println(menueValue);
-    }
-    */
-    /*
-      if ( menueValue % 2 == 0 ) {
-      lcd.backlight();
-      } else {
-      lcd.noBacklight();
-      }
-    */
-    
-    /*
        handle overflow of millis()
     */
     currRuntime = millis();
@@ -544,6 +530,11 @@ void loop()
     if ( currRuntime >= lastRuntime + 1000 ) {
       lastRuntime = currRuntime;
       wetterStation();
+      if ( eeprom_update ) {
+          Serial.println("write_eprom_values()");
+          eeprom_update = false;
+          write_eprom_values(&eeprom_values);
+      }
     }
   } else if (mode == MODE_MAIN_MENU ) {
      int follow_up = menue();    // get entry later
@@ -584,9 +575,12 @@ void loop()
     lcd.setCursor(0, 0);
     lcd.print(F("Set altitude"));
     altitude = set_altitude(altitude);
+    eeprom_values.altitude = altitude;
     delay(1000);
     lcd.clear();
-    // mode = main_menu[follow_up].next_action;
+    lcd.print(F("Saveing values..."));
+    write_eprom_values(&eeprom_values);
+    lcd.clear();
     mode = MODE_WETTER_STATION;
   } else if (mode == MODE_NOT_IMPLEMENTED ) {
     lcd.clear();
