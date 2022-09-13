@@ -1,20 +1,20 @@
-#define VERSION "1.6.11"
+#define VERSION "1.7.1"
 
-#include <LiquidCrystal_I2C.h>
+#include <LiquidCrystal_I2C.h> // LiquidCrystal_I2C - Frank de Brabander (https://github.com/johnrickman/LiquidCrystal_I2C)
 
-LiquidCrystal_I2C lcd(0x27, 20, 4); // set the LCD address to 0x27 for a 16 chars and 2 line display
+LiquidCrystal_I2C lcd(0x27, 20, 4); // set the LCD address to 0x27 for a 20 chars and 4 line display
 
 
 #include <Arduino.h>
-#include "DHT.h"
-#include "EEPROM.h"
-#include "DS3231.h"
-#include <Sodaq_BMP085.h>
-#include <Encoder.h>
+#include "DHT.h"           // DHT sensor library - Adafruit (1.4.4)
+#include "EEPROM.h"        // pre-installed library
+#include "DS3231.h"        // DS3231 - Andrew Wickert
+#include <Sodaq_BMP085.h>  // Sodaq_BMP085  -> or better going with alternative BMP280??
+#include <Encoder.h>       // Encoder - Paul Stoffregen
 
-const int CLK = 5;
-const int DT  = 4;
-const int SW  = 3;
+const int CLK = 5;         // Pin A5 is Encoder CLK (rotating detection)
+const int DT  = 4;         // Pin A4 is Encoder DT  (rotating detection)
+const int SW  = 3;         // Pin A3 is Encoder SW (klick / switch)
 
 Encoder menueSelector(DT, CLK);
 
@@ -22,26 +22,33 @@ long menueValue = 0;
 long oldMenueValue = 0;
 int last_klick = 0;
 bool release_klick = false;
+long wErrorCode = 0;
+DateTime startMoment;
+
+#define LCD_ERROR  1
+#define DHT_ERROR  2
+#define BMP_ERROR  4
+#define ENC_ERROR  8
+#define RTC_ERROR 16
 
 #define LIGHT_MAX 1            // current LCD type only supports on and off
 #define LIGHT_MIN 0
 int  lightValue = LIGHT_MAX;
 
 #define MODE_NOT_IMPLEMENTED -1
-#define MODE_WETTER_STATION 0
-#define MODE_MAIN_MENU     1
-#define MODE_SETTINGS       2
-#define MODE_RESET_MINMAX   3
-#define MODE_SET_ALTITUDE   4
+#define MODE_WETTER_STATION   0
+#define MODE_MAIN_MENU        1
+#define MODE_SETTINGS         2
+#define MODE_RESET_MINMAX     3
+#define MODE_SET_ALTITUDE     4
 
 int mode = MODE_WETTER_STATION;
 
-int32_t altitude = 1200;      // like Balderschwang
+int32_t altitude = 1044;      // like Balderschwang
 int32_t pressure_in_pascal;
 
 #define DHTPIN 2     // Digital pin connected to the DHT sensor
 #define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
-// tself to work on faster procs.
 
 DHT dht(DHTPIN, DHTTYPE);
 
@@ -63,22 +70,22 @@ typedef struct menu {
 const menu main_menu[] = {
   { "Set", MODE_SETTINGS, MODE_WETTER_STATION },    
   { "Reset", MODE_RESET_MINMAX, MODE_WETTER_STATION },
-  { "Test 3", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
-  { "Test 4", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
-  { "Test 5", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
-  { "Test 6", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
-  { "Test 7", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+ // { "Test 3", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+ // { "Test 4", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+ // { "Test 5", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+ // { "Test 6", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+ // { "Test 7", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
   { "Wetter", MODE_WETTER_STATION, MODE_WETTER_STATION },
 };
 
 const menu set_menu[] = {
   { "Altitude", MODE_SET_ALTITUDE, MODE_WETTER_STATION },
-  { "Test 2", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
-  { "Test 3", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
-  { "Test 4", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
-  { "Test 5", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
-  { "Test 6", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
-  { "Test 7", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+ // { "Test 2", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+ // { "Test 3", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+ // { "Test 4", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+ // { "Test 5", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+ // { "Test 6", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
+ // { "Test 7", MODE_NOT_IMPLEMENTED, MODE_WETTER_STATION },
   { "Back",     MODE_MAIN_MENU,     MODE_WETTER_STATION },
 };
 
@@ -208,11 +215,16 @@ void dump_float(float dumpMe)
 void setup()
 {
   // do not accept klicks during setup
+  
   release_klick = false;
-  Serial.begin(9600);
-  Serial.print(F("DHT_LCD loop ")); Serial.println(F(VERSION));
+  int device_rc = 0;
+  wErrorCode = 0;     // reset global variable to capture error-bits
+  Serial.begin(9600); 
+  Serial.print(F("weatherstation ")); Serial.println(F(VERSION));
   // EEPROM.write(ADDR_VERSION,1); EEPROM.write(ADDR_RESET,255);
-  dht.begin();
+  // TODO: Allow DHT to be optional, if BMP280 already covers the temperature, huminity and pressure
+  dht.begin();  // dht.begin is of type void, so we could not check the return code here
+  Serial.print(F("TEST-rc: ")); Serial.println(device_rc);
   bmp.begin();
 
   lcd.init();                      // initialize the lcd
@@ -235,14 +247,14 @@ void setup()
       initialize RTC, if year is equal 0 otherwise keep already stored time
   */
   if ( RTC.getYear() == 0 ) {
-    RTC.setDate(10);
-    RTC.setMonth(9);
-    RTC.setYear(20);
-    RTC.setHour(20);
-    RTC.setMinute(22);
+    RTC.setDate(15);
+    RTC.setMonth(8);
+    RTC.setYear(22);
+    RTC.setHour(9);
+    RTC.setMinute(0);
     RTC.setSecond(0);
   }
-
+  startMoment = RTClib::now();
   eprom_dump_flat(0, 16);
   read_eprom_values(&eeprom_values);
   Serial.print("version: "); Serial.println(eeprom_values.version);
@@ -274,7 +286,7 @@ void setup()
   release_klick = true;
 }
 
-void show_menue(const menu theMenu[], int entry)
+void show_menue(int arraySize,const menu theMenu[], int entry)
 {
   lcd.clear();
   int row, col;
@@ -287,7 +299,8 @@ void show_menue(const menu theMenu[], int entry)
   lcd.setCursor(col, row);
   lcd.print(F("*"));
 
-  for (int i=0; i<8; i++) { // TODO make 8 flexible!!
+  Serial.println(arraySize);
+  for (int i=0; i<arraySize; i++) { // TODO make 8 flexible!!
     if ( i < 4 ) {
       col=1; row=i;
     } else {
@@ -330,10 +343,11 @@ int menue()
 {
   int selected_entry = 0;
   klicked = 0; // reset "klicked" to react on a new event
-  show_menue(main_menu,0);
+  int arraySize = int(sizeof(main_menu) / sizeof(main_menu[0]));
+  show_menue(arraySize,main_menu,0);
   while (! klicked) {    
-    if ( check_selector(&oldMenueValue, &menueValue, &selected_entry, 0, 7)) {
-      show_menue(main_menu, selected_entry);
+    if ( check_selector(&oldMenueValue, &menueValue, &selected_entry, 0, arraySize-1)) {
+      show_menue(arraySize,main_menu, selected_entry);
       Serial.print(F("Menue: ")); Serial.print(selected_entry); Serial.print(F(" ")); Serial.print(main_menu[selected_entry].entry_title); Serial.print(F(" ")); Serial.print(main_menu[selected_entry].action);
       Serial.println();  
     }
@@ -349,10 +363,11 @@ int set_menue()
   int selected_entry = 0;
   Serial.println("set_menu");
   klicked = 0; // reset "klicked" to react on a new event
-  show_menue(set_menu, 0);
+  int arraySize = int(sizeof(set_menu) / sizeof(set_menu[0]));
+  show_menue(arraySize, set_menu, 0);
   while (! klicked) {    
     if ( check_selector(&oldMenueValue, &menueValue, &selected_entry, 0, 7)) {
-      show_menue(set_menu, selected_entry);
+      show_menue(arraySize, set_menu, selected_entry);
       Serial.print(F("Menue: ")); Serial.print(selected_entry); Serial.print(F(" ")); Serial.print(set_menu[selected_entry].entry_title); Serial.print(F(" ")); Serial.print(set_menu[selected_entry].action);
       Serial.println();  
     }
@@ -363,6 +378,7 @@ int set_menue()
 }
 
 int32_t set_altitude(int32_t oldAltitude) {
+  // TODO allow fast-setting mode (like jumping 10m or 100m), if events are quite fast
   int newAltitude=oldAltitude;
   lcd.setCursor(0,1);
   lcd.print(newAltitude);
@@ -379,20 +395,22 @@ int32_t set_altitude(int32_t oldAltitude) {
 
 void wetterStation()
 {
+  // TODO Optionally (also) output values to Serial
   int runtime;
   int seconds, minutes, hours, date, month, year;
   bool blinking = true;
   char bufferOut[20];
   char str_temp[20];
 
+  /*
+   * DHT sensor
+   */
   // TODO the DHT11 has some
   // Reading temperature or humidity takes about 250 milliseconds!
   // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
   float h = dht.readHumidity();
   // Read temperature as Celsius (the default)
   float t = dht.readTemperature();
-  // Read temperature as Fahrenheit (isFahrenheit = true)
-  // float f = dht.readTemperature(true);
 
   if (useMax) {
     if ( t > tempMax ) {
@@ -422,14 +440,22 @@ void wetterStation()
   }
 
   // Check if any reads failed and exit early (to try again).
+  // TODO - Do not exit fast but try to continue with other devices
+  // Check is done by isnan() (is not a number) - if temperature is not a number, something went wrong
   if (isnan(t)) {
-    Serial.println(F("Failed to read from DHT sensor!"));
-    return;
+    // TODO add error-handling for RTC (if device is defect or not available)
+    // In my tess I always got 1482191185 as unixtime, if the RTC is not available    
+    //Serial.print(F("Failed to read from DHT sensor!"));
+    // mark DHT-error in the error-vector wErrorCode
+    wErrorCode = wErrorCode | DHT_ERROR;
+        sprintf(bufferOut, " ---");
+  } else {  
+    dtostrf(t, 3, 1, str_temp);
+    sprintf(bufferOut, " %s", str_temp);
   }
-
-  dtostrf(t, 3, 1, str_temp);
-  sprintf(bufferOut, " %s", str_temp);
-
+  /*
+   * LCD-Display current temperature and huminity
+   */
   lcd.setCursor(0, 0);
   lcd.print((bufferOut)); lcd.print((char) 0); lcd.print(F("C"));
 
@@ -440,6 +466,11 @@ void wetterStation()
   // sprintf(bufferOut, "(%s", str_temp);
 
   lcd.setCursor(0, 1);
+  /*
+   * BMP sensor
+   */
+  // TODO how to check BMP communication error
+  // TODO set wErrCode || BMP_ERROR, if communication is broken
   pressure_in_pascal = bmp.readPressure(altitude, 9.81);
   dtostrf(pressure_in_pascal / 100.0, 4, 0, str_temp);
   sprintf(bufferOut, "%s hPa", str_temp);
@@ -450,6 +481,9 @@ void wetterStation()
   lcd.setCursor(0, 2);
   lcd.print(bufferOut);
 
+  /*
+   * LCD-Display for Temp Min/Max Values
+   */
   dtostrf(tempMax, 3, 1, str_temp);
   sprintf(bufferOut, "%s", str_temp);
   lcd.setCursor(10, 1);
@@ -462,6 +496,9 @@ void wetterStation()
 
   runtime = millis() / 1000;
 
+  /*
+   * LCD-Display Date and Time
+   */
   year = RTC.getYear();
   month = RTC.getMonth(Dummy);
   date = RTC.getDate();
@@ -477,6 +514,40 @@ void wetterStation()
   sprintf(bufferOut, "%02i", hours);   lcd.print(bufferOut); lcd.print(F(":"));
   sprintf(bufferOut, "%02i", minutes); lcd.print(bufferOut); lcd.print(F(":"));
   sprintf(bufferOut, "%02i", seconds); lcd.print(bufferOut);
+  /*
+   * Serial-Out error-code vector
+   */
+  DateTime currentMoment = RTClib::now();
+  long timeCode = currentMoment.unixtime();
+  if (timeCode - startMoment.unixtime() == 0 ) {
+    // RTC not working
+    wErrorCode = wErrorCode | RTC_ERROR;
+    timeCode = millis()/1000;
+  }
+  Serial.print(F("Errorcode: "));
+  Serial.print(wErrorCode);
+  if ((wErrorCode & RTC_ERROR)) {
+    Serial.print(F(" RTC"));
+  }
+  if ((wErrorCode & DHT_ERROR)) {
+    Serial.print(F(" DHT"));
+  }
+  if ((wErrorCode & LCD_ERROR)) {
+    Serial.print(F(" LCD"));
+  }
+  if ((wErrorCode & BMP_ERROR)) {
+    Serial.print(F(" BMP"));
+  }
+  if ((wErrorCode & ENC_ERROR)) {
+    Serial.print(F(" ENC"));
+  }
+  Serial.print(F(" Timecode: "));
+  Serial.print(timeCode);
+  if ((wErrorCode & RTC_ERROR)) {
+    Serial.println(F("s"));
+  } else {
+    Serial.println(F("ux"));
+  }
 }
 
 void Interrupt()
